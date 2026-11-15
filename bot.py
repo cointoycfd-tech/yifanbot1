@@ -12,7 +12,6 @@ BOT_TOKEN = "9026238096:AAEGGKY914xfHn76q2aeXFqTks_iau_x_QA"
 DB_NAME = "exchange_accounting.db"
 # ==================================================
 
-# 启动一个简单的 HTTP 服务器来响应 Render 的端口检测，防止超时
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,30 +25,26 @@ def run_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# 配置日志
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# 初始化数据库
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # 交易流水表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            biz_type TEXT NOT NULL,          -- 'in' (入款) 或 'out' (下发)
-            raw_text TEXT NOT NULL,          -- 原始文本
-            fiat_amount REAL DEFAULT 0,      -- 法币金额
-            usdt_amount REAL DEFAULT 0,      -- USDT 金额（下发或扣点后U）
-            note TEXT,                       -- 备注/经办人
+            biz_type TEXT NOT NULL,
+            raw_text TEXT NOT NULL,
+            fiat_amount REAL DEFAULT 0,
+            usdt_amount REAL DEFAULT 0,
+            note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # 全局设置表（存储汇率和点位）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -76,7 +71,6 @@ def set_setting(key, value):
     conn.commit()
     conn.close()
 
-# /start 命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rate = get_setting('exchange_rate', 125.0)
     fee = get_setting('fee_rate', 7.0)
@@ -89,11 +83,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• **入款**：直接发算式或金额，例如：`入款 2000000/125*(0.93)` 或 `+ 2000000`，自动累计今日入金。\n"
         "• **下发**：按设置汇率及扣除点位计算实际到账 U，例如：`下发 14880U 财务002` 或直接 `14880U 财务002`。\n\n"
         "📊 **查看报表**：\n"
-        "• 发送 `/report` 或 `/今日报表` 生成今日累计入款、下发及未下发汇总。",
+        "• 发送 `/today` 生成今日累计入款、下发及未下发汇总。",
         parse_mode="Markdown"
     )
 
-# /rate 设置汇率
 async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         current = get_setting('exchange_rate', 125.0)
@@ -106,7 +99,6 @@ async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError:
         await update.message.reply_text("❌ 格式错误，请输入正确的数字，例如：`/rate 125`", parse_mode="Markdown")
 
-# /fee 设置点位
 async def set_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         current = get_setting('fee_rate', 7.0)
@@ -119,7 +111,6 @@ async def set_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError:
         await update.message.reply_text("❌ 格式错误，请输入正确的数字，例如：`/fee 7`", parse_mode="Markdown")
 
-# 核心消息与记账处理（入款、下发智能识别）
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -130,14 +121,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # 1. 匹配下发格式：如 "下发 14880U 财务002" 或 "14880U 财务002"
     out_match = re.search(r'^(?:下发)?\s*([\d,]+(?:\.\d+)?)\s*U\s*(.*)$', text, re.IGNORECASE)
     if out_match:
         input_usdt = float(out_match.group(1).replace(',', ''))
         note = out_match.group(2).strip() or "无备注"
         
-        # 按照设置的费率点位扣除（例如输入下发 14880U，扣除对应点位后或者直接记录下发U数）
-        # 此处直接记录输入的下发U金额，或按点位计算实际到账。可根据实际业务需要微调。
         actual_out_usdt = input_usdt * (1 - current_fee / 100.0)
         
         cursor.execute(
@@ -157,7 +145,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # 2. 匹配入款格式：支持 "+ 2000000" 或 "入款 2000000..." 或纯算式
     in_clean = text
     if text.startswith('+'):
         in_clean = text[1:].strip()
@@ -167,7 +154,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         if re.match(r'^[\d\.\/\*\+\-\(\)\s]+$', in_clean):
             fiat_val = float(eval(in_clean))
-            # 自动根据当前汇率折算 USDT
             usdt_val = fiat_val / current_rate
             
             cursor.execute(
@@ -176,7 +162,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             conn.commit()
             
-            # 查询今日累计入金总额
             cursor.execute("""
                 SELECT SUM(fiat_amount), SUM(usdt_amount) 
                 FROM transactions 
@@ -203,12 +188,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     conn.close()
     await update.message.reply_text("❓ 未能识别该格式。入款可直接发金额或算式（如 `2000000` 或 `+2000000`），下发格式如 `下发 14880U 财务002`。")
 
-# /report 与 /今日报表 汇总处理
 async def daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 统计今日入款总额
     cursor.execute("""
         SELECT SUM(fiat_amount), SUM(usdt_amount) 
         FROM transactions 
@@ -218,7 +201,6 @@ async def daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     total_in_fiat = in_res[0] if in_res[0] else 0.0
     total_in_usdt = in_res[1] if in_res[1] else 0.0
 
-    # 统计今日下发总额（U）
     cursor.execute("""
         SELECT SUM(usdt_amount) 
         FROM transactions 
@@ -227,7 +209,6 @@ async def daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     out_res = cursor.fetchone()
     total_out_usdt = out_res[0] if out_res[0] else 0.0
 
-    # 计算今日未下发（结余）U = 总入款折算USDT - 总已下发USDT
     pending_usdt = total_in_usdt - total_out_usdt
     conn.close()
 
@@ -245,7 +226,7 @@ async def daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📤 **今日已下发总U**：`{total_out_usdt:,.2f} U`\n"
         f"⏳ **今日未下发(结余)U**：`{pending_usdt:,.2f} U`\n"
         "------------------------------------\n"
-        "💡 随时发送 `/report` 或 `/今日报表` 查看最新数据。"
+        "💡 随时发送 `/today` 查看最新实时数据。"
     )
     await update.message.reply_text(report_text, parse_mode="Markdown")
 
@@ -257,12 +238,10 @@ def main() -> None:
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # 注册指令与消息处理器
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("rate", set_rate))
     application.add_handler(CommandHandler("fee", set_fee))
-    application.add_handler(CommandHandler("report", daily_report))
-    application.add_handler(CommandHandler("今日报表", daily_report))
+    application.add_handler(CommandHandler("today", daily_report))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 财务记账/下发小助手已成功启动...")
