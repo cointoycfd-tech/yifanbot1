@@ -82,8 +82,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📝 **记账格式说明**：\n"
         "• **入款**：直接发算式或金额，例如：`入款 2000000/125*(0.93)` 或 `+ 2000000`，自动累计今日入金。\n"
         "• **下发**：按设置汇率及扣除点位计算实际到账 U，例如：`下发 14880U 财务002` 或直接 `14880U 财务002`。\n\n"
-        "📊 **查看报表**：\n"
-        "• 发送 `/today` 生成今日累计入款、下发及未下发汇总。",
+        "📊 **报表与清空**：\n"
+        "• 发送 `/today` 查看今日汇总。\n"
+        "• 发送 `/clean` 清空今日所有记账数据。",
         parse_mode="Markdown"
     )
 
@@ -110,6 +111,19 @@ async def set_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"✅ 交易点位费率已成功更新为：`{new_fee}%`", parse_mode="Markdown")
     except ValueError:
         await update.message.reply_text("❌ 格式错误，请输入正确的数字，例如：`/fee 7`", parse_mode="Markdown")
+
+# 新增：/clean 命令，用于清空当日所有数据
+async def clean_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    # 删除今天的所有流水记录
+    cursor.execute("""
+        DELETE FROM transactions 
+        WHERE date(created_at, 'localtime') = date('now', 'localtime')
+    """)
+    conn.commit()
+    conn.close()
+    await update.message.reply_text("🧹 **已成功清空今日所有记账数据！** 当前今日入金、下发及未下发已全部归零。")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
@@ -226,7 +240,7 @@ async def daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📤 **今日已下发总U**：`{total_out_usdt:,.2f} U`\n"
         f"⏳ **今日未下发(结余)U**：`{pending_usdt:,.2f} U`\n"
         "------------------------------------\n"
-        "💡 随时发送 `/today` 查看最新实时数据。"
+        "💡 随时发送 `/today` 查看最新数据，发送 `/clean` 清空今日数据。"
     )
     await update.message.reply_text(report_text, parse_mode="Markdown")
 
@@ -242,6 +256,7 @@ def main() -> None:
     application.add_handler(CommandHandler("rate", set_rate))
     application.add_handler(CommandHandler("fee", set_fee))
     application.add_handler(CommandHandler("today", daily_report))
+    application.add_handler(CommandHandler("clean", clean_today))  # 注册 clean 命令
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 财务记账/下发小助手已成功启动...")
