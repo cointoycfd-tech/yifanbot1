@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ==================== 配置区域 ====================
-BOT_TOKEN = "9026238096:AAEGGKY914xFlHn76q2aeXFqTks_iau_x_QA"
+BOT_TOKEN = "9026238096:AAEGGKY914xfHn76q2aeXFqTks_iau_x_QA"
 DB_NAME = "exchange_accounting.db"
 # ==================================================
 
